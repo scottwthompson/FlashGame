@@ -106,7 +106,7 @@ package
 			successEmailText.visible = false;
 		}
 		public function update(feedback:String) {
-			mcFeedbackText.text = feedback;
+			mcFeedbackText.htmlText = feedback;
 		}
 	}
 

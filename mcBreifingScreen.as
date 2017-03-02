@@ -66,7 +66,7 @@ package
 		}
 		
 		public function update(brief:String) {
-			mcBreifText.text = brief;
+			mcBreifText.htmlText = brief;
 		}
 		
 		public function isvisible():Boolean {
