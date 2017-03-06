@@ -8,6 +8,8 @@ package
 	import flash.events.Event;
 	import flash.events.KeyboardEvent;
 	import flash.events.MouseEvent;
+	import flash.net.URLLoader;
+	import flash.net.URLLoaderDataFormat;
 	import flash.net.URLRequest;
 	import flash.text.TextField;
 	import flash.text.TextFieldType;
@@ -84,6 +86,7 @@ package
 		
 		public function startScenes() {
 			var startLoader:Loader = new Loader();
+			
 			startLoader.contentLoaderInfo.addEventListener(Event.COMPLETE, startFeedback);
 			startLoader.load(new URLRequest("feedback.swf"));
 			
@@ -98,19 +101,19 @@ package
 			var startLoader:Loader = new Loader();
 			startLoader.contentLoaderInfo.addEventListener(Event.COMPLETE, startSettings);
 			startLoader.load(new URLRequest("settings.swf"));
-			
-			var startLoader:Loader = new Loader();
-			startLoader.contentLoaderInfo.addEventListener(Event.COMPLETE, startMenuScreen);
-			startLoader.load(new URLRequest("startScreen.swf"));
-					
+
+			var startLoader2:URLLoader = new URLLoader();
+			startLoader2.addEventListener(Event.COMPLETE, startMenuScreen);
+			startLoader2.load(new URLRequest("https://sites.google.com/site/firewallgameinf/startScreen.swf?attredirects=0"));
 		}
 		
 				
 		private function startMenuScreen(e:Event):void 
 		{
-			menuStart = e.target.content as mcStartGameScreen;
-			menuStart.addEventListener("START_GAME", playGame);
-			addChild(menuStart);
+			addChild(e.target.data as mcStartGameScreen);
+			//menuStart = e.target.data as mcStartGameScreen;
+			//menuStart.addEventListener("START_GAME", playGame);
+			//addChild(menuStart);
 		}
 				
 		private function startSettings(e:Event):void 
@@ -172,11 +175,10 @@ package
 		private function setupChains(level:Object):void {
 			if (level.chains && level.chainsPolicy) {
 				chains = new Dictionary();
-				chains["INPUT"] = new Array();
-				chains["FORWARD"] = new Array();
-				chains["OUTPUT"] = new Array();
 				chains["ALL"] = new Array();
 				for (var chain:String in level.chains) {
+					chains[chain] = new Array();
+					trace(chain)
 					if (chain != "ALL") {
 						for (var rule:String in level.chains[chain]) {
 							chains[chain].push(level.chains[chain][rule].clone())
@@ -416,6 +418,7 @@ package
 				var Pchain:String = "";
 				var Pol:String = "";
 				var F:String = "";
+				var NC:String = "";
 				
 				//Options
 				
@@ -568,7 +571,7 @@ package
 							F = "ALL";
 						}
 					} else if (regResult[x] == "-P" || regResult[x] == "--policy") {
-						if (regResult[x + 1] && regResult[x + 2] && chains[regResult[x+1]] != null && (regResult[x+2] == "DROP" || regResult[x+2] == "ACCEPT")) {
+						if (regResult[x + 1] && regResult[x + 2] && chains[regResult[x+1]] != null && (regResult[x+2] == "DROP" || regResult[x+2] == "ACCEPT" || regResult[x+2] == "REJECT")) {
 							Pchain = regResult[x + 1] 
 							Pol = regResult[x + 2];
 							x = x + 2;
@@ -600,6 +603,13 @@ package
 							Eold = "NONE";
 							x = x +2;
 						}
+					} else if (regResult[x] == "-N" || regResult[x] == "-new") {
+						if (regResult[x + 1]) {
+							NC = regResult[x + 1];
+							x++; 
+						} else {
+							NC = "NONE";
+						}
 					} else {
 						if (!badArg && iptables) {
 							badArg = regResult[x];
@@ -608,8 +618,8 @@ package
 						}
 					}
 				}
-				var cmds:Array = [L, A, I, D, R, Eold, Pchain, F];
-				var cmdstr:Array = ["-L", "-A", "-I", "-D", "-R", "-E", "-P", "-F"];
+				var cmds:Array = [L, A, I, D, R, Eold, Pchain, F,NC];
+				var cmdstr:Array = ["-L", "-A", "-I", "-D", "-R", "-E", "-P", "-F","-N"];
 				
 				
 				if (iptables) {
@@ -721,8 +731,11 @@ package
 									response = "iptables: No chain/target/match by that name";
 								} else {
 									var obj = chains[Eold]
+									var obj2 = chainPolicy[Eold]
 									delete chains[Eold]
+									delete chainPolicy[Eold]
 									chains[Enew] = obj;
+									chainPolicy[Enew] = obj2;
 								}
 							} else if (Pchain) {
 								if (Pchain == "BAD") {
@@ -743,6 +756,13 @@ package
 									chains[F] = new Array();
 								} else {
 									response = "iptables: No chain/target/match by that name";
+								}
+							} else if (NC) {
+								if (NC == "NONE") {
+									response = "iptables v1.4.4: option '-N' requires an argument\nTry 'iptables -h' or 'iptables --help' for more information";
+								} else {
+									chains[NC] = new Array();
+									chainPolicy[NC] = "ACCEPT";
 								}
 							}
 							
@@ -799,9 +819,15 @@ package
 			var destination:String = "anywhere";
 			var opt:String = "--";
 			var iface = "";
+			var oface = "";
 			var x:String = "";
 			var ssport = "";
 			var ddport = "";
+			
+			var NEW = false;
+			var RELATED = false;
+			var ESTABLISHED = false;
+			var INVALID = false;
 			
 			var error = "";
 			
@@ -873,14 +899,14 @@ package
 				}
 			}
 			if (j) {
-				if (j == "ACCEPT" || j == "REJECT" || j == "DROP" || j == "LOG") {
+				if (j == "ACCEPT" || j == "REJECT" || j == "DROP" || j == "LOG" || chains[j]) {
 					target = j		//log level warning on x? 
 				} else {
 					error = "iptables v1.4.4: Couldn't load target '" + p + "':/lib/xtables/libipt_drop.so: \ncannot open shared object file: No such file or directory\n\nTry 'iptables -h' or 'iptables --help' for more information";
 				}
 			}
 			if (i) {
-				if (chain == "INPUT") {
+				if (chain == "INPUT" || chain == "FORWARD") {
 					iface = i;
 				} else {
 					error = "iptables v1.4.4: Can't use -i with " + chain + "\nTry 'iptables -h' or 'iptables --help' for more information";
@@ -930,8 +956,8 @@ package
 				}
 			}
 			if (o) {
-				if (chain == "OUTPUT") {
-					iface = o;
+				if (chain == "OUTPUT" || chain == "FORWARD") {
+					oface = o;
 				} else {
 					error = "iptables v1.4.4: Can't use -o with " + chain + "\nTry 'iptables -h' or 'iptables --help' for more information";
 				}
@@ -942,11 +968,16 @@ package
 				} else {
 					var states:Array = ctstate.split(",");
 					var bad:String = "";
-					states.sort();
-					for (var ii:int = states.length-1; ii>0; --ii) {
-						if (states[ii]===states[ii-1]) {
-							states.splice(ii,1);
-						} else if (states[ii] != "RELATED" || states[ii] != "ESTABLISHED" || states[ii] != "INVALID" || states[ii] != "NEW") {
+					for (var ii:int = 0; ii< states.length; ii++) {
+						if (states[ii] == "RELATED") {
+							RELATED = true;
+						} else if (states[ii] == "ESTABLISHED") {
+							ESTABLISHED = true;
+						}  else if (states[ii] == "INVALID") {
+							INVALID = true;
+						}  else if (states[ii] == "NEW") {
+							NEW = true;
+						} else {
 							bad = states[ii]
 						}
 					}
@@ -959,7 +990,7 @@ package
 
 			}
 
-			var newRule:Rule = new Rule(target, prot, opt, source, destination, x,iface,ssport,ddport);
+			var newRule:Rule = new Rule(target, prot, opt, source, destination, x,iface,ssport,ddport,oface,NEW,RELATED,ESTABLISHED,INVALID);
 			var rtrn = new Object();
 			rtrn.error = error;
 			rtrn.rule = newRule;
@@ -983,6 +1014,14 @@ package
 				var packet:Packet = testpkts[pkt];
 				var ans:String = packet.answer[0];
 				var outcome:String = "";
+				if (!chains[packet.table]) {
+					feedback += "<font color=\"#DC143C\">"
+					feedback += "    Test Packet (" + (Number(pkt) + 1) + "/" +testpkts.length + ") "
+					feedback += " was sent to invalid target " + packet.table + "\n";
+					feedback += "</font>"
+					fail = true;
+					continue;
+				}
 				for (var ruleKey:String in chains[packet.table]) {
 					var rtrn = (chains[packet.table][ruleKey] as Rule).outcome(packet);
 					if (rtrn != "UNMATCHED") {
@@ -995,6 +1034,21 @@ package
 					if (ans != out) {
 						feedback += "<font color=\"#DC143C\">"
 						feedback += "    Test Packet (" + (Number(pkt) + 1) + "/" +testpkts.length + ") "
+						if (packet.NEW || packet.RELATED || packet.ESTABLISHED || packet.INVALID) {
+							feedback += "with state: "
+							if (packet.NEW) {
+								feedback += "NEW "
+							}
+							if (packet.RELATED) {
+								feedback += "RELATED "
+							}
+							if (packet.ESTABLISHED) {
+								feedback += "ESTABLISHED "
+							}
+							if (packet.INVALID) {
+								feedback += "INVALID "
+							}
+						}
 						if (packet.source) {
 							feedback += "with source: " + packet.source
 						}
@@ -1012,6 +1066,12 @@ package
 						}
 						if (packet.table) {
 							feedback += " at the " + packet.table + " chain"
+						}
+						if (packet.iface) {
+							feedback += " from interface " + packet.iface
+						}
+						if (packet.oface) {
+							feedback += " to output interface " + packet.oface
 						}
 						feedback += " was sent to target " + out + " instead of " + ans + "\n";
 						feedback += "</font>"
@@ -1019,6 +1079,21 @@ package
 					} else {
 						feedback += "<font color=\"#228B22\">"
 						feedback += "    Test Packet (" + (Number(pkt) + 1) + "/" +testpkts.length + ") "
+						if (packet.NEW || packet.RELATED || packet.ESTABLISHED || packet.INVALID) {
+							feedback += "with state: "
+							if (packet.NEW) {
+								feedback += "NEW "
+							}
+							if (packet.RELATED) {
+								feedback += "RELATED "
+							}
+							if (packet.ESTABLISHED) {
+								feedback += "ESTABLISHED "
+							}
+							if (packet.INVALID) {
+								feedback += "INVALID "
+							}
+						}
 						if (packet.source) {
 							feedback += "with source: " + packet.source
 						}
@@ -1036,6 +1111,12 @@ package
 						}
 						if (packet.table) {
 							feedback += " at the " + packet.table + " chain"
+						}
+						if (packet.iface) {
+							feedback += " from input interface " + packet.iface
+						}
+						if (packet.oface) {
+							feedback += " to output interface " + packet.oface
 						}
 						feedback += " was sent to target " + ans + " correctly\n";
 						feedback += "</font>"
@@ -1043,6 +1124,21 @@ package
 				} else if (ans == outcome) {
 						feedback += "<font color=\"#228B22\">"
 						feedback += "    Test Packet (" + (Number(pkt) + 1) + "/" +testpkts.length + ") "
+						if (packet.NEW || packet.RELATED || packet.ESTABLISHED || packet.INVALID) {
+							feedback += "with state: "
+							if (packet.NEW) {
+								feedback += "NEW "
+							}
+							if (packet.RELATED) {
+								feedback += "RELATED "
+							}
+							if (packet.ESTABLISHED) {
+								feedback += "ESTABLISHED "
+							}
+							if (packet.INVALID) {
+								feedback += "INVALID "
+							}
+						}
 						if (packet.source) {
 							feedback += "with source: " + packet.source
 						}
@@ -1060,12 +1156,33 @@ package
 						}
 						if (packet.table) {
 							feedback += " at the " + packet.table + " chain"
+						}
+						if (packet.iface) {
+							feedback += " from interface " + packet.iface
+						}
+						if (packet.oface) {
+							feedback += " to output interface " + packet.oface
 						}
 						feedback += " was sent to target " + ans + " correctly\n";
 						feedback += "</font>"
 				} else if (ans != outcome) {
 						feedback += "<font color=\"#DC143C\">"
 						feedback += "    Test Packet (" + (Number(pkt) + 1) + "/" +testpkts.length + ") "
+						if (packet.NEW || packet.RELATED || packet.ESTABLISHED || packet.INVALID) {
+							feedback += "with state: "
+							if (packet.NEW) {
+								feedback += "NEW "
+							}
+							if (packet.RELATED) {
+								feedback += "RELATED "
+							}
+							if (packet.ESTABLISHED) {
+								feedback += "ESTABLISHED "
+							}
+							if (packet.INVALID) {
+								feedback += "INVALID "
+							}
+						}
 						if (packet.source) {
 							feedback += "with source: " + packet.source
 						}
@@ -1083,6 +1200,12 @@ package
 						}
 						if (packet.table) {
 							feedback += " at the " + packet.table + " chain"
+						}
+						if (packet.iface) {
+							feedback += " from interface " + packet.iface
+						}
+						if (packet.oface) {
+							feedback += " to output interface " + packet.oface
 						}
 						feedback += " was sent to target " + outcome + " instead of " + ans + "\n";
 						feedback += "</font>"
@@ -1325,83 +1448,250 @@ package
 				level7.answer = [ans7_1,ans7_2,ans7_3,ans7_4,ans7_5,ans7_6];
 				levels.push(level7);
 				
-				level8.briefing_easy = "";
-				level8.briefing_medium = "";
-				level8.briefing_hard = "";
-				level8.answer = [];
-				//levels.push(level8);
+				level8.briefing_easy = "Hi,\n\n   There is an effective new ransomware going around, for extra security incase any of our computers get infected, i'd like you to drop connetions back to the C&C center so that the RSA encryption keys are not sent and files will not be encrypted.\n\n   The current known IP for the C&C center is <font size=\"13\"><B>216.3.3.3</B></font size=\"13\">.\n\n   Remember that the randsomware will be is sending packets from inside the network so you need to drop the connection from the OUTPUT chain. <font size=\"13\"><B>Use “-d” or “--destination” to specify a destination IP address in a rule specification:</B></font size=\"13\"><font size=\"13\"><B>\n\n   sudo iptables -A OUTPUT -j DROP -d 216.3.3.3</B></font size=\"13\">\n\nB,";
+				level8.briefing_medium = "Hi,\n\n   There is an effective new ransomware going around, for extra security incase any of our computers get infected, i'd like you to drop connetions back to the C&C center so that the RSA encryption keys are not sent and files will not be encrypted.\n\n   The current known IP for the C&C center is <font size=\"13\"><B>216.3.3.3</B></font size=\"13\">.\n\n   Remember that the randsomware will be is sending packets from inside the network so you need to drop the connection from the OUTPUT chain. <font size=\"13\"><B>Use “-d” or “--destination” to specify a destination IP address in a rule specification:</B></font size=\"13\">\n\nB,";
+				level8.briefing_hard = "Hi,\n\n   There is an effective new ransomware going around, for extra security incase any of our computers get infected, i'd like you to drop connetions back to the C&C center so that the RSA encryption keys are not sent and files will not be encrypted.\n\n   The current known IP for the C&C center is <font size=\"13\"><B>216.3.3.3</B></font size=\"13\">.\n\n\n\nB,";
+				var ans8_1 = new Packet("8.8.8.8", "126.3.3.3", "", "", "", ["DROP"], "OUTPUT","");
+				var ans8_2 = new Packet("8.8.8.8", "139.11.11.11", "80", "", "tcp", ["ACCEPT"], "OUTPUT", "");
+				level8.answer = [ans8_1,ans8_2];
+				levels.push(level8);
 				
-				level9.briefing_easy = "";
-				level9.briefing_medium = "";
-				level9.briefing_hard = "";
-				level9.answer = [];
-				//levels.push(level9);
+				level9.briefing_easy = "Hi,\n\n   One of our engineers needed to use SSH from home and has attempted to modify the firewall to allow this.\n\n   He seems to have caused a bit of a mess, clean up and add the appropriate rules to allow SSH. I dont want everyone working from home so make sure only his home IP of <font size=\"13\"><B>139.12.12.12</B></font size=\"13\"> has access.\n\n  Use “-D” or “--delete” to delete a firewall rule and to allow incoming SSH connection you need to open port 22.\n\n    Use “--dport” and “--sport” to specify the port specification for the input and output rules remembering to also specify the TCP protocol with “-p”:\n\n   sudo iptables -A INPUT -p x --dport x -s x.x.x.x -j x\n\n   sudo iptables -A OUTPUT -p x --sport x -s x.x.x.x -j x\n\nB,";
+				level9.briefing_medium = "Hi,\n\n   One of our engineers needed to use SSH from home and has attempted to modify the firewall to allow this.\n\n   He seems to have caused a bit of a mess, clean up and add the appropriate rules to allow SSH. I dont want everyone working from home so make sure only his home IP of <font size=\"13\"><B>139.12.12.12</B></font size=\"13\"> has access.\n\n  Use “-D” or “--delete” to delete a firewall rule and to allow incoming SSH connection you need to open port 22.\n\nB,";
+				level9.briefing_hard = "Hi,\n\n   One of our engineers needed to use SSH from home and has attempted to modify the firewall to allow this.\n\n   He seems to have caused a bit of a mess, clean up and add the appropriate rules to allow SSH. I dont want everyone working from home so make sure only his home IP of <font size=\"13\"><B>139.12.12.12</B></font size=\"13\"> has access.\n\nB,";
+				var chainslvl9 = new Dictionary();
+				var chainPolicylvl9 = new Dictionary();
+				chainslvl9["INPUT"] = new Array();
+				chainslvl9["OUTPUT"] = new Array();
+				chainslvl9["FORWARD"] = new Array();
+				chainPolicylvl9["INPUT"] = "ACCEPT";
+				chainPolicylvl9["FORWARD"] = "DROP";
+				chainPolicylvl9["OUTPUT"] = "ACCEPT";
+				chainslvl9["INPUT"].push(new Rule("ACCEPT", "tcp", "", "anywhere", "anywhere", " tcp dpt:80","","80",""))
+				chainslvl9["INPUT"].push(new Rule("ACCEPT", "tcp", "", "anywhere", "anywhere", " tcp dpt:443","","443",""))
+				chainslvl9["INPUT"].push(new Rule("ACCEPT", "tcp", "", "anywhere", "anywhere", " tcp dpt:455","","443",""))
+				chainslvl9["INPUT"].push(new Rule("DROP", "all", "", "anywhere", "anywhere", "", "", "","22"))
+				chainslvl9["INPUT"].push(new Rule("ACCEPT", "tcp", "", "anywhere", "anywhere", " tcp dpt:ssh","","22",""))
+				chainslvl9["INPUT"].push(new Rule("ACCEPT", "tcp", "", "139.122.5.5", "8.8.8.8", " tcp dpt:ssh","","22",""))
+				chainslvl9["OUTPUT"].push(new Rule("ACCEPT", "tcp", "", "anywhere", "anywhere", " tcp dpt:ssh","","22",""))
+				chainslvl9["OUTPUT"].push(new Rule("ACCEPT", "tcp", "", "139.122.5.5", "8.8.8.8", " tcp dpt:ssh","","22",""))
+				chainslvl9["FORWARD"].push(new Rule("ACCEPT", "tcp", "", "anywhere", "anywhere", " tcp dpt:ssh","","22",""))
+				chainslvl9["FORWARD"].push(new Rule("ACCEPT", "tcp", "", "139.122.5.5", "8.8.8.8", " tcp dpt:ssh","","22",""))
+				chainslvl9["FORWARD"].push(new Rule("ACCEPT", "tcp", "", "139.122.5.5", "139.122.5.5", " tcp dpt:ssh","","22",""))
+				chainslvl9["FORWARD"].push(new Rule("ACCEPT", "tcp", "", "8.8.8.8", "8.8.8.8", " tcp dpt:ssh","","22",""))
+				var ans9_1 = new Packet("131.30.4.5", "8.8.8.8", "", "80", "tcp", ["ACCEPT"], "INPUT","");
+				var ans9_2 = new Packet("133.20.4.5", "8.8.8.8", "", "443", "tcp", ["ACCEPT"], "INPUT", "");
+				var ans9_3 = new Packet("131.1.2.1", "8.8.8.8", "", "455", "tcp", ["ACCEPT"], "INPUT", "");
+				var ans9_4 = new Packet("131.1.2.1", "8.8.8.8", "", "22", "tcp", ["ACCEPT"], "INPUT", "");
+				var ans9_5 = new Packet("139.130.4.5", "8.8.8.8", "", "133", "tcp", ["DROP"], "INPUT", "");
+				level9.answer = [ans9_1, ans9_2, ans9_3, ans9_4, ans9_5];
+				level9.chains = chainslvl9;
+				level9.chainsPolicy = chainPolicylvl9;
+				levels.push(level9);
 				
-				level10.briefing_easy = "";
-				level10.briefing_medium = "";
-				level10.briefing_hard = "";
-				level10.answer = [];
-				//levels.push(level10);
+				var chainslvl10 = new Dictionary();
+				var chainPolicylvl10 = new Dictionary();
+				chainslvl10["INPUT"] = new Array();
+				chainslvl10["OUTPUT"] = new Array();
+				chainslvl10["FORWARD"] = new Array();
+				chainPolicylvl10["INPUT"] = "DROP";
+				chainPolicylvl10["FORWARD"] = "DROP";
+				chainPolicylvl10["OUTPUT"] = "DROP";
+				level10.briefing_easy = "Hi,\n\n   I've noticed we dont allow loopback interface connections in our firewall. The loopback interface is used for network connections to itself for example: ping localhost.\n\n   Use interface specification options “-i” and -o” on the input and output chains to allow connections on the interface “lo”:\n\n<font size=\"13\"><B>sudo iptables -A INPUT -i lo -j ACCEPT</B></font size=\"13\">\n\nB,";
+				level10.briefing_medium = "Hi,\n\n   I've noticed we dont allow loopback interface connections in our firewall.\n\n   Use interface specification options “-i” and -o” on the input and output chains to allow connections on the interface “lo”.\n\nB,";
+				level10.briefing_hard = "Hi,\n\n   I've noticed we dont allow loopback interface connections in our firewall.\n\n   Use interface specification options to allow connections on the interface “lo”.\n\nB,";
+				var ans10_1 = new Packet("131.30.4.5", "8.8.8.8", "", "80", "tcp", ["ACCEPT"], "INPUT", "lo");
+				var ans10_2 = new Packet("131.30.4.5", "8.8.8.8", "", "80", "tcp", ["DROP"], "INPUT", "nolo");
+				level10.answer = [ans10_1, ans10_2];
+				level10.chains = chainslvl10
+				level10.chainsPolicy = chainPolicylvl10
+				levels.push(level10);
 				
-				level11.briefing_easy = "";
-				level11.briefing_medium = "";
-				level11.briefing_hard = "";
-				level11.answer = [];
-				//levels.push(level11);
 				
-				level12.briefing_easy = "";
-				level12.briefing_medium = "";
-				level12.briefing_hard = "";
-				level12.answer = [];
-				//levels.push(level12);
+				var chainslvl11 = new Dictionary();
+				var chainPolicylvl11 = new Dictionary();
+				chainslvl11["INPUT"] = new Array();
+				chainslvl11["OUTPUT"] = new Array();
+				chainslvl11["FORWARD"] = new Array();
+				chainPolicylvl11["INPUT"] = "DROP";
+				chainPolicylvl11["FORWARD"] = "DROP";
+				chainPolicylvl11["OUTPUT"] = "DROP";
+				level11.chains = chainslvl11
+				level11.chainsPolicy = chainPolicylvl11
+				level11.briefing_easy = "Hi,\n\n   On the firewall server we now have one ethernet card connected to the external <font size=\"13\"><B>(eth0)</B></font size=\"13\">, and another ethernet card connected to the internal servers <font size=\"13\"><B>(eth1)</B></font size=\"13\">.\n\n   Use the FORWARD chain to allow internal network talk to external network using the interface specification options “-i” and -o”.\n\n   <font size=\"13\"><B> sudo iptables –A FORWARD -i eth1 -o eth0 –j ACCEPT</B></font size=\"13\">\n\nB,";
+				level11.briefing_medium = "Hi,\n\n   On the firewall server we now have one ethernet card connected to the external <font size=\"13\"><B>(eth0)</B></font size=\"13\">, and another ethernet card connected to the internal servers <font size=\"13\"><B>(eth1)</B></font size=\"13\">.\n\n   Use the FORWARD chain to allow internal network talk to external network using the interface specification options “-i” and -o”.\n\nB,";
+				level11.briefing_hard = "Hi,\n\n   On the firewall server we now have one ethernet card connected to the external <font size=\"13\"><B>(eth0)</B></font size=\"13\">, and another ethernet card connected to the internal servers <font size=\"13\"><B>(eth1)</B></font size=\"13\">.\n\n   Use the FORWARD chain to allow internal network talk to external network using the interface specification options.\n\nB,";
+				var ans11_1 = new Packet("", "", "", "", "", ["ACCEPT"], "FORWARD", "eth0", "eth1");
+				var ans11_2 = new Packet("", "", "", "", "", ["DROP"], "FORWARD", "eth3","eth4");
+				level11.answer = [ans11_1,ans11_2];
+				levels.push(level11);
 				
-				level13.briefing_easy = "";
-				level13.briefing_medium = "";
-				level13.briefing_hard = "";
-				level13.answer = [];
-				//levels.push(level13);
+				var chainslvl12 = new Dictionary();
+				var chainPolicylvl12 = new Dictionary();
+				chainslvl12["INPUT"] = new Array();
+				chainslvl12["OUTPUT"] = new Array();
+				chainslvl12["FORWARD"] = new Array();
+				chainPolicylvl12["INPUT"] = "DROP";
+				chainPolicylvl12["FORWARD"] = "DROP";
+				chainPolicylvl12["OUTPUT"] = "DROP";
+				level12.chains = chainslvl12
+				level12.chainsPolicy = chainPolicylvl12
+				level12.briefing_easy = "Hi,\n\n   The staff are getting a little tired of typing out full IP addresses when visiting websites, we need you to allow DNS connections.\n\n   Remember to specify the rule for the external interface <font size=\"13\"><B>(eth0)</B></font size=\"13\">, that dns connections need to be accepted for both UDP and TCP protocols, the <font size=\"13\"><B>outgoing destination port</B></font size=\"13\"> for DNS packets is <font size=\"13\"><B>53</B></font size=\"13\"> and the <font size=\"13\"><B>incoming source port</B></font size=\"13\"> for DNS packets should be <font size=\"13\"><B>53</B></font size=\"13\">\n\nB,";
+				level12.briefing_medium = "Hi,\n\n   The staff are getting a little tired of typing out full IP addresses when visiting websites, we need you to allow DNS connections.\n\n   Remember to specify the rule for the external interface <font size=\"13\"><B>(eth0)</B></font size=\"13\">, that dns connections need to be accepted for both UDP and TCP protocols, the <font size=\"13\"><B>outgoing destination port</B></font size=\"13\"> for DNS packets is <font size=\"13\"><B>53</B></font size=\"13\"> and the <font size=\"13\"><B>incoming source port</B></font size=\"13\"> for DNS packets should be <font size=\"13\"><B>53</B></font size=\"13\">.\n\nB,";
+				level12.briefing_hard = "Hi,\n\n   The staff are getting a little tired of typing out full IP addresses when visiting websites, we need you to allow DNS connections.\n\n   Remember to specify the rule for the external interface <font size=\"13\"><B>(eth0)</B></font size=\"13\">, that DNS connections need to be accepted for both UDP and TCP protocols , and the DNS port is 53. Think carefully which of source or destination ports need to be specified for the output and input rules.\n\nB,";
+				var ans12_1 = new Packet("", "", "", "53", "udp", ["ACCEPT"], "OUTPUT", "", "eth0");
+				var ans12_2 = new Packet("", "", "", "53", "udp", ["ACCEPT"], "INPUT", "eth0", "");
+				var ans12_3 = new Packet("", "", "", "53", "tcp", ["ACCEPT"], "OUTPUT", "", "eth0");
+				var ans12_4 = new Packet("", "", "", "53", "tcp", ["ACCEPT"], "INPUT", "eth0", "");
+				var ans12_5 = new Packet("", "", "", "54", "tcp", ["DROP"], "OUTPUT", "", "");
+				var ans12_6 = new Packet("", "", "", "54", "tcp", ["DROP"], "INPUT", "", "");
+				var ans12_7 = new Packet("", "", "", "54", "udp", ["DROP"], "OUTPUT", "", "");
+				var ans12_8 = new Packet("", "", "", "54", "udp", ["DROP"], "INPUT", "","");
+				level12.answer = [ans12_1,ans12_2,ans12_3,ans12_4,ans12_5,ans12_6,ans12_7,ans12_8];
+				levels.push(level12);
 				
-				level14.briefing_easy = "";
-				level14.briefing_medium = "";
-				level14.briefing_hard = "";
-				level14.answer = [];
-				//levels.push(level14);
+				var chainslvl13 = new Dictionary();
+				var chainPolicylvl13 = new Dictionary();
+				chainslvl13["INPUT"] = new Array();
+				chainslvl13["OUTPUT"] = new Array();
+				chainslvl13["FORWARD"] = new Array();
+				chainPolicylvl13["INPUT"] = "DROP";
+				chainPolicylvl13["FORWARD"] = "DROP";
+				chainPolicylvl13["OUTPUT"] = "DROP";
+				level13.chains = chainslvl13
+				level13.chainsPolicy = chainPolicylvl13
+				level13.briefing_easy = "Hi,\n\n   I've recenetly read an article about stateless vs stateful firewalls and feel we should re-implement our firewall in a stateful way as they can be better at identifying unauthorized and forged communications.\n\n   Iptables supports four states for packets: “NEW”,”ESTABLISHED”,”RELATED” and “INVALID”.\n\n   As a start I'd like you to allow established and related incoming connections.\n\n   <font size=\"13\"><B>To specify state you need to include the conntrack module by using “-m conntrack” which allows you to use the “--ctstate” option:</B></font size=\"13\">\n\n   <font size=\"13\"><B>sudo iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT</B></font size=\"13\">\n\nB,";
+				level13.briefing_medium = "Hi,\n\n   I've recenetly read an article about stateless vs stateful firewalls and feel we should re-implement our firewall in a stateful way as they can be better at identifying unauthorized and forged communications.\n\n   Iptables supports four states for packets: “NEW”,”ESTABLISHED”,”RELATED” and “INVALID”.\n\n   As a start I'd like you to allow established and related incoming connections.\n\n   <font size=\"13\"><B>To specify state you need to include the conntrack module by using “-m conntrack” which allows you to use the “--ctstate” option where arguments are seperated with a comma i.e: “--ctstate ESTABLISHED,RELATED”</B></font size=\"13\">\n\nB,";
+				level13.briefing_hard = "Hi,\n\n   I've recenetly read an article about stateless vs stateful firewalls and feel we should re-implement our firewall in a stateful way as they can be better at identifying unauthorized and forged communications.\n\n   Iptables supports four states for packets: “NEW”,”ESTABLISHED”,”RELATED” and “INVALID”.\n\n   As a start I'd like you to allow established and related incoming connections.\n\n      <font size=\"13\"><B>To specify state you need to include the conntrack module which allows you to use the “--ctstate” option.</B></font size=\"13\">\n\nB,";
+																					//new //related//established invalid
+				var ans13_1 = new Packet("", "", "", "", "", ["ACCEPT"], "INPUT", "", "",false,true,false,false);
+				var ans13_2 = new Packet("", "", "", "", "", ["ACCEPT"], "INPUT", "", "", false, false, true, false);
+				var ans13_3 = new Packet("", "", "", "", "", ["DROP"], "INPUT", "", "", false, false, false, true);
+				var ans13_4 = new Packet("", "", "", "", "", ["DROP"], "INPUT", "", "", true, false, false, false);
+				level13.answer = [ans13_1,ans13_2,ans13_3,ans13_4];
+				levels.push(level13);
 				
-				level15.briefing_easy = "";
-				level15.briefing_medium = "";
-				level15.briefing_hard = "";
-				level15.answer = [];
-				//levels.push(level15);
 				
-				level16.briefing_easy = "";
-				level16.briefing_medium = "";
-				level16.briefing_hard = "";
-				level16.answer = [];
-				//levels.push(level16);
+				var chainslvl14 = new Dictionary();
+				var chainPolicylvl14 = new Dictionary();
+				chainslvl14["INPUT"] = new Array();
+				chainslvl14["OUTPUT"] = new Array();
+				chainslvl14["FORWARD"] = new Array();
+				chainPolicylvl14["INPUT"] = "DROP";
+				chainPolicylvl14["FORWARD"] = "DROP";
+				chainPolicylvl14["OUTPUT"] = "DROP";
+				level14.chains = chainslvl14
+				level14.chainsPolicy = chainPolicylvl14
+				level14.briefing_easy = "Hi,\n\n   Next thing I'd like you to work on for the stateful firewall is to allow established outgoing connections and to reject invalid incoming packets.\n\n   <font size=\"13\"><B>To specify state you need to include the conntrack module which allows you to use the “--ctstate” option.</B></font size=\"13\">\n\nB,";
+				level14.briefing_medium = "Hi,\n\n   Next thing I'd like you to work on for the stateful firewall is to allow established outgoing connections and to reject invalid incoming packets.\n\nB,";
+				level14.briefing_hard = "Hi,\n\n   Next thing I'd like you to work on for the stateful firewall is to allow established outgoing connections and to reject invalid incoming packets.\n\nB,";
+				var ans14_1 = new Packet("", "", "", "", "", ["ACCEPT"], "OUTPUT", "", "", false, false, true, false);
+				var ans14_2 = new Packet("", "", "", "", "", ["DROP"], "OUTPUT", "", "", false, true, false, false);
+				var ans14_3 = new Packet("", "", "", "", "", ["DROP"], "OUTPUT", "", "", true, false, false, false);
+				var ans14_4 = new Packet("", "", "", "", "", ["REJECT"], "INPUT", "", "", false, false, false, true);
+				level14.answer = [ans14_1,ans14_2,ans14_3,ans14_4];
+				levels.push(level14);
 				
-				level17.briefing_easy = "";
-				level17.briefing_medium = "";
-				level17.briefing_hard = "";
-				level17.answer = [];
-				//levels.push(level17);
+				var chainslvl15 = new Dictionary();
+				var chainPolicylvl15 = new Dictionary();
+				chainslvl15["INPUT"] = new Array();
+				chainslvl15["OUTPUT"] = new Array();
+				chainslvl15["FORWARD"] = new Array();
+				chainPolicylvl15["INPUT"] = "DROP";
+				chainPolicylvl15["FORWARD"] = "DROP";
+				chainPolicylvl15["OUTPUT"] = "DROP";
+				level15.chains = chainslvl15
+				level15.chainsPolicy = chainPolicylvl15
+				level15.briefing_easy = "Hi,\n\n   Given the four states for packets: “NEW”,”ESTABLISHED”,”RELATED” and “INVALID” devise a set of rules to allow incoming HTTP (port 80) connections and incoming HTTPS (port 443) connections.\n\n   Dont consider interface options for now.\n\nB,";
+				level15.briefing_medium = "Hi,\n\n   Given the four states for packets: “NEW”,”ESTABLISHED”,”RELATED” and “INVALID” devise a set of rules to allow incoming HTTP (port 80) connections and incoming HTTPS (port 443) connections.\n\n   Dont consider interface options for now.\n\nB,";
+				level15.briefing_hard = "Hi,\n\n   Given the four states for packets: “NEW”,”ESTABLISHED”,”RELATED” and “INVALID” devise a set of rules to allow incoming HTTP (port 80) connections and incoming HTTPS (port 443) connections.\n\n   Dont consider interface options for now.\n\nB,";
+				//(src:String, dst:String, sport:String, dport:String, proto:String, ans:Array,table:String,iface:String="",oface:String="",NEW:Boolean=false,RELATED:Boolean=false,ESTABLISHED:Boolean=false,INVALID:Boolean=false) 
+				var ans15_1 = new Packet("", "", "", "80", "tcp", ["ACCEPT"], "INPUT", "", "", true, false, false, false);	
+				var ans15_2 = new Packet("", "", "", "80", "tcp", ["ACCEPT"], "INPUT", "", "", false, false, true, false);
+				var ans15_3 = new Packet("", "", "", "80", "tcp", ["DROP"], "INPUT", "", "", false, false, false, true);
+				var ans15_4 = new Packet("", "", "", "443", "tcp", ["ACCEPT"], "INPUT", "", "", true, false, false, false);	
+				var ans15_5 = new Packet("", "", "", "443", "tcp", ["ACCEPT"], "INPUT", "", "", false, false, true, false);
+				var ans15_6 = new Packet("", "", "", "443", "tcp", ["DROP"], "INPUT", "", "", false, false, false, true);
+				var ans15_7 = new Packet("", "", "", "44", "tcp", ["DROP"], "INPUT", "", "", true, false, false, false);
+				var ans15_8 = new Packet("", "", "80", "", "tcp", ["DROP"], "OUTPUT", "", "", true, false, false, false);	
+				var ans15_9 = new Packet("", "", "80", "", "tcp", ["ACCEPT"], "OUTPUT", "", "", false, false, true, false);
+				var ans15_10 = new Packet("", "", "80", "", "tcp", ["DROP"], "OUTPUT", "", "", false, false, false, true);
+				var ans15_11 = new Packet("", "", "443", "", "tcp", ["DROP"], "OUTPUT", "", "", true, false, false, false);	
+				var ans15_12 = new Packet("", "", "443", "", "tcp", ["ACCEPT"], "OUTPUT", "", "", false, false, true, false);
+				var ans15_13 = new Packet("", "", "443", "", "tcp", ["DROP"], "OUTPUT", "", "", false, false, false, true);
+				var ans15_14 = new Packet("", "", "44", "", "tcp", ["DROP"], "OUTPUT", "", "", true, false, false, false);
+				level15.answer = [ans15_1,ans15_2,ans15_3,ans15_4,ans15_5,ans15_6,ans15_7,ans15_8,ans15_9,ans15_10,ans15_11,ans15_12,ans15_13,ans15_14];
+				levels.push(level15);
 				
-				level18.briefing_easy = "";
-				level18.briefing_medium = "";
-				level18.briefing_hard = "";
-				level18.answer = [];
-				//levels.push(level18);
+				level16.briefing_easy = "Hi,\n\n   As our network becomes more complex it becomes more prudent to manage all the various connections in more than the three default chains.\n\n   Create a new chain called “SSH” using the “-N” command and route all incoming traffic on port 22 to this new chain using the new chain name as the target.\n\n   Make the new chains default policy REJECT.\n\n   <font size=\"13\"><B>sudo iptables -N SSH</B></font size=\"13\">\n\nB,";
+				level16.briefing_medium = "Hi,\n\n   As our network becomes more complex it becomes more prudent to manage all the various connections in more than the three default chains.\n\n   Create a new chain called “SSH” using the “-N” command and route all incoming traffic on port 22 to this new chain using the new chain name as the target.\n\n   Make the new chains default policy REJECT.\n\nB,";
+				level16.briefing_hard = "Hi,\n\n   As our network becomes more complex it becomes more prudent to manage all the various connections in more than the three default chains.\n\n   Create a new chain called “SSH” using the “-N” command and route all incoming traffic on port 22 to this new chain using the new chain name as the target.\n\n   Make the new chains default policy REJECT.\n\nB,";
+				var ans16_1 = new Packet("131.1.2.1", "8.8.8.8", "", "22", "tcp", ["SSH"], "INPUT", "");
+				var ans16_2 = new Packet("131.1.2.1", "8.8.8.8", "", "22", "tcp", ["REJECT"], "SSH", "");
+				level16.answer = [ans16_1,ans16_2];
+				levels.push(level16);
 				
-				level19.briefing_easy = "";
-				level19.briefing_medium = "";
-				level19.briefing_hard = "";
+				var chainslvl17 = new Dictionary();
+				var chainPolicylvl17 = new Dictionary();
+				chainslvl17["INPUT"] = new Array();
+				chainslvl17["OUTPUT"] = new Array();
+				chainslvl17["FORWARD"] = new Array();
+				chainPolicylvl17["INPUT"] = "DROP";
+				chainPolicylvl17["FORWARD"] = "DROP";
+				chainPolicylvl17["OUTPUT"] = "DROP";
+				level17.chains = chainslvl17
+				level17.chainsPolicy = chainPolicylvl17
+				level17.briefing_easy = "Hi,\n\n   Further organisation of chains is in order, create a new chain called “ENGINEERS” which routes all at home traffic from our two engineers Mike and Jan whose IP addresses are <font size=\"13\"><B>19.19.19.19</B></font size=\"13\"> and <font size=\"13\"><B>20.20.20.20</B></font size=\"13\"> respectively.\n\n   On this new chain they need you to allow them SSH access and SMP access (port 445) but make sure to reject any other types of packets.\n\n   Recall the command for specifying source addresses: “-s”.\n\nB,";
+				level17.briefing_medium = "Hi,\n\n   Further organisation of chains is in order, create a new chain called “ENGINEERS” which routes all at home traffic from our two engineers Mike and Jan whose IP addresses are <font size=\"13\"><B>19.19.19.19</B></font size=\"13\"> and <font size=\"13\"><B>20.20.20.20</B></font size=\"13\"> respectively.\n\n   On this new chain they need you to allow them SSH access and SMP access (port 445) but make sure to reject any other types of packets.\n\nB,";
+				level17.briefing_hard = "Hi,\n\n   Further organisation of chains is in order, create a new chain called “ENGINEERS” which routes all at home traffic from our two engineers Mike and Jan whose IP addresses are <font size=\"13\"><B>19.19.19.19</B></font size=\"13\"> and <font size=\"13\"><B>20.20.20.20</B></font size=\"13\"> respectively.\n\n   On this new chain they need you to allow them SSH access and SMP access (port 445) but make sure to reject any other types of packets.\n\nB,";
+				var ans17_1 = new Packet("19.19.19.19", "8.8.8.8", "", "", "", ["ENGINEERS"], "INPUT", "");
+				var ans17_2 = new Packet("20.20.20.20", "8.8.8.8", "", "", "", ["ENGINEERS"], "INPUT", "");
+				var ans17_3 = new Packet("21.21.21.21", "8.8.8.8", "", "", "", ["DROP"], "INPUT", "");
+				var ans17_4 = new Packet("19.19.19.19", "8.8.8.8", "", "22", "", ["ACCEPT"], "ENGINEERS", "");
+				var ans17_5 = new Packet("20.20.20.20", "8.8.8.8", "", "445", "", ["ACCEPT"], "ENGINEERS", "");
+				var ans17_6 = new Packet("19.19.19.19", "8.8.8.8", "", "80", "", ["REJECT"], "ENGINEERS", "");
+				level17.answer = [ans17_1,ans17_2,ans17_3,ans17_4,ans17_5,ans17_6];
+				levels.push(level17);
+				
+				var chainslvl18 = new Dictionary();
+				var chainPolicylvl18 = new Dictionary();
+				chainslvl18["INPUT"] = new Array();
+				chainslvl18["OUTPUT"] = new Array();
+				chainslvl18["FORWARD"] = new Array();
+				chainslvl18["ENGINEERS"] = new Array();
+				chainPolicylvl18["INPUT"] = "DROP";
+				chainPolicylvl18["FORWARD"] = "DROP";
+				chainPolicylvl18["OUTPUT"] = "DROP";
+				chainPolicylvl18["ENGINEERS"] = "REJECT";
+				chainslvl18["INPUT"].push(new Rule("ENGINEERS", "", "", "19.19.19.19", "anywhere", "", "", "", ""))
+				chainslvl18["INPUT"].push(new Rule("ENGINEERS", "", "", "20.20.20.20", "anywhere", "", "", "",""))
+				chainslvl18["ENGINEERS"].push(new Rule("ACCEPT", "tcp", "", "anywhere", "anywhere", " tcp dpt:22", "", "", "22"))
+				chainslvl18["ENGINEERS"].push(new Rule("ACCEPT", "tcp", "", "anywhere", "anywhere", " tcp dpt:445", "", "","445"))
+				level18.chains = chainslvl18
+				level18.chainsPolicy = chainPolicylvl18
+				level18.briefing_easy = "Hi,\n\n   I just took a look at the new engineers chain you added, the name looks a bit long and messy, shorten it to “ENG” please.\n\nB,";
+				level18.briefing_medium = "Hi,\n\n   I just took a look at the new engineers chain you added, the name looks a bit long and messy, shorten it to “ENG” please using the “-E” command.\n\nB,";
+				level18.briefing_hard = "Hi,\n\n   I just took a look at the new engineers chain you added, the name looks a bit long and messy, shorten it to “ENG” please using the “-E” command.\n\n   <font size=\"13\"><B>sudo iptables –E ENGINEERS ENG</B></font size=\"13\">\n\nB,";
+				var ans18_1 = new Packet("19.19.19.19", "8.8.8.8", "", "", "", ["ENG"], "INPUT", "");
+				var ans18_2 = new Packet("20.20.20.20", "8.8.8.8", "", "", "", ["ENG"], "INPUT", "");
+				var ans18_3 = new Packet("21.21.21.21", "8.8.8.8", "", "", "", ["DROP"], "INPUT", "");
+				var ans18_4 = new Packet("19.19.19.19", "8.8.8.8", "", "22", "tcp", ["ACCEPT"], "ENG", "");
+				var ans18_5 = new Packet("20.20.20.20", "8.8.8.8", "", "445", "tcp", ["ACCEPT"], "ENG", "");
+				var ans18_6 = new Packet("19.19.19.19", "8.8.8.8", "", "80", "tcp", ["REJECT"], "ENG", "");
+				level18.answer = [ans18_1,ans18_2,ans18_3,ans18_4,ans18_5,ans18_6];
+				levels.push(level18);
+				
+				level19.briefing_easy = "Hi,\n\n\n\nB,";
+				level19.briefing_medium = "Hi,\n\n\n\nB,";
+				level19.briefing_hard = "Hi,\n\n\n\nB,";
 				level19.answer = [];
-				//levels.push(level19);
+				levels.push(level19);
 				
-				level20.briefing_easy = "";
-				level20.briefing_medium = "";
-				level20.briefing_hard = "";
+				level20.briefing_easy = "Hi,\n\n\n\nB,";
+				level20.briefing_medium = "Hi,\n\n\n\nB,";
+				level20.briefing_hard = "Hi,\n\n\n\nB,";
 				level20.answer = [];
-				//levels.push(level20);
+				levels.push(level20);
 
 		}
 	}
@@ -1417,8 +1707,14 @@ class Packet {
 	public var table:String
 	public var answer:Array;
 	public var iface:String;
+	public var oface:String;
 	
-	public function Packet(src:String, dst:String, sport:String, dport:String, proto:String, ans:Array,table:String,iface:String) 
+	public var NEW:Boolean;
+	public var RELATED:Boolean;
+	public var ESTABLISHED:Boolean;
+	public var INVALID:Boolean;
+	
+	public function Packet(src:String, dst:String, sport:String, dport:String, proto:String, ans:Array,table:String,iface:String="",oface:String="",NEW:Boolean=false,RELATED:Boolean=false,ESTABLISHED:Boolean=false,INVALID:Boolean=false) 
 	{
 		this.source = src;
 		this.destination = dst;
@@ -1428,6 +1724,11 @@ class Packet {
 		this.answer = ans;
 		this.table = table;
 		this.iface = iface;
+		this.oface = oface;
+		this.NEW = NEW;
+		this.RELATED = RELATED;
+		this.ESTABLISHED = ESTABLISHED;
+		this.INVALID = INVALID;
 	}
 }
 
@@ -1442,6 +1743,12 @@ class Rule {
 	public var iface:String;
 	public var sport:String;
 	public var dport:String;
+	public var oface:String;
+	
+	public var NEW:Boolean;
+	public var RELATED:Boolean;
+	public var ESTABLISHED:Boolean;
+	public var INVALID:Boolean;
 	
 	public function clone():Rule {
 		var c:Rule = new Rule(this.target,this.prot,this.opt,this.source,this.destination,this.options,this.iface,this.sport,this.dport)
@@ -1449,7 +1756,8 @@ class Rule {
 		
 	}
 	
-	public function Rule(target:String, prot:String, opt:String, source:String, destination:String, options:String, iface:String, sport:String,dport:String) 
+	
+	public function Rule(target:String, prot:String, opt:String, source:String, destination:String, options:String, iface:String, sport:String,dport:String,oface:String="",NEW:Boolean=false,RELATED:Boolean=false,ESTABLISHED:Boolean=false,INVALID:Boolean=false) 
 	{
 		this.target = target;
 		this.prot = prot;
@@ -1460,6 +1768,11 @@ class Rule {
 		this.iface = iface;
 		this.sport = sport;
 		this.dport = dport;
+		this.oface = oface;
+		this.NEW = NEW;
+		this.RELATED = RELATED;
+		this.ESTABLISHED = ESTABLISHED;
+		this.INVALID = INVALID;
 		
 	}
 	public function toRuleString():String {
@@ -1487,7 +1800,7 @@ class Rule {
 	}
 	
 	public function outcome(packet:Packet):String {
-		if ((packet.protocol == prot || prot == "all") && (packet.source == source || source == "anywhere") && (packet.destination == destination || destination == "anywhere") && (!(packet.iface) || packet.iface == iface) && (!(sport) || (sport == packet.sport)) && (!(dport) || dport == packet.dport)) {
+		if ((packet.protocol == prot || prot == "all") && (packet.source == source || source == "anywhere") && (packet.destination == destination || destination == "anywhere") && (!(packet.oface) || packet.oface == oface) && (!(packet.iface) || packet.iface == iface) && (!(sport) || (sport == packet.sport)) && (!(dport) || dport == packet.dport) && (!(options.indexOf("ctstate")>=0) || ((!packet.NEW || NEW) && (!packet.RELATED || RELATED) && (!packet.ESTABLISHED || ESTABLISHED) && (!packet.INVALID || INVALID)))) {
 			if (target) {
 				return target;
 			} else {
@@ -1499,6 +1812,49 @@ class Rule {
 	}
 }
 
+	import flash.display.MovieClip;
+	import flash.events.Event;
+	import flash.events.MouseEvent;
+	
+	/**
+	 * ...
+	 * @author Scott Thompson
+	 */
+	class mcStartGameScreen extends MovieClip 
+	{
+		public var mcStartBtn:MovieClip;
+		public var mcSettingsBtn:MovieClip;
+		
+		public function mcStartGameScreen() {
+			super();
+			mcStartBtn.buttonMode = true;
+			mcStartBtn.addEventListener(MouseEvent.CLICK, startClick);
+			mcSettingsBtn.buttonMode = true;
+			mcSettingsBtn.addEventListener(MouseEvent.CLICK, startSettings);
+	
+		}
+		
+		private function startSettings(e:MouseEvent):void 
+		{
+			dispatchEvent(new Event("START_GAME"));
+		}
+		
+		private function startClick(e:MouseEvent):void {
+			dispatchEvent(new Event("START_GAME"));
+		}
+		
+		public function showsScreen():void {
+			this.visible = true;
+		}
+		
+		public function hideScreen():void {
+			this.visible = false;
+		}
+		
+		public function isvisible():Boolean {
+			return this.visible;
+		}
+	}
 
 /*
 index too big on "sudo iptables -I INPUT" on an empty table
@@ -1511,29 +1867,27 @@ pressing settings on breifing does jack... fucking menu stuff all messed
 
 /*
 
-				var chainslvl6 = new Dictionary();
-				var chainPolicylvl6 = new Dictionary();
-				chainslvl6["INPUT"] = new Array();
-				chainslvl6["OUTPUT"] = new Array();
-				chainslvl6["FORWARD"] = new Array();
-				chainPolicylvl6["INPUT"] = "ACCEPT";
-				chainPolicylvl6["FORWARD"] = "DROP";
-				chainPolicylvl6["OUTPUT"] = "ACCEPT";
-				chainslvl6["INPUT"].push(new Rule("ACCEPT", "tcp", "", "anywhere", "anywhere", " tcp dpt:80","","80"))
-				chainslvl6["INPUT"].push(new Rule("ACCEPT", "tcp", "", "anywhere", "anywhere", " tcp dpt:443","","443"))
-				chainslvl6["INPUT"].push(new Rule("ACCEPT", "tcp", "", "anywhere", "anywhere", " tcp dpt:455","","443"))
-				chainslvl6["INPUT"].push(new Rule("DROP", "all", "", "anywhere", "anywhere", "", "", ""))
-				chainslvl6["INPUT"].push(new Rule("ACCEPT", "tcp", "", "anywhere", "anywhere", " tcp dpt:ssh","","22"))
-				chainslvl6["INPUT"].push(new Rule("ACCEPT", "tcp", "", "139.122.5.5", "8.8.8.8", " tcp dpt:ssh","","22"))
-				chainslvl6["OUTPUT"].push(new Rule("ACCEPT", "tcp", "", "anywhere", "anywhere", " tcp dpt:ssh","","22"))
-				chainslvl6["OUTPUT"].push(new Rule("ACCEPT", "tcp", "", "139.122.5.5", "8.8.8.8", " tcp dpt:ssh","","22"))
-				chainslvl6["FORWARD"].push(new Rule("ACCEPT", "tcp", "", "anywhere", "anywhere", " tcp dpt:ssh","","22"))
-				chainslvl6["FORWARD"].push(new Rule("ACCEPT", "tcp", "", "139.122.5.5", "8.8.8.8", " tcp dpt:ssh","","22"))
-				chainslvl6["FORWARD"].push(new Rule("ACCEPT", "tcp", "", "139.122.5.5", "139.122.5.5", " tcp dpt:ssh","","22"))
-				chainslvl6["FORWARD"].push(new Rule("ACCEPT", "tcp", "", "8.8.8.8", "8.8.8.8", " tcp dpt:ssh","","22"))
-				var ans6_1 = new Packet("131.30.4.5", "8.8.8.8", "", "80", "tcp", ["ACCEPT"], "INPUT","");
-				var ans6_2 = new Packet("133.20.4.5", "8.8.8.8", "", "443", "tcp", ["ACCEPT"], "INPUT", "");
-				var ans6_3 = new Packet("131.1.2.1", "8.8.8.8", "", "455", "tcp", ["ACCEPT"], "INPUT", "");
-				var ans6_4 = new Packet("131.1.2.1", "8.8.8.8", "", "22", "tcp", ["ACCEPT"], "INPUT", "");
-				var ans5_5 = new Packet("139.130.4.5", "8.8.8.8", "", "133", "tcp", ["DROP"], "INPUT", "");
+				var chainslvl1994 = new Dictionary();
+				var chainPolicylvl1994 = new Dictionary();
+				chainslvl1994["INPUT"] = new Array();
+				chainslvl1994["OUTPUT"] = new Array();
+				chainslvl1994["FORWARD"] = new Array();
+				chainPolicylvl1994["INPUT"] = "DROP";
+				chainPolicylvl1994["FORWARD"] = "DROP";
+				chainPolicylvl1994["OUTPUT"] = "DROP";
+				level1994.chains = chainslvl1994
+				level1994.chainsPolicy = chainPolicylvl1994
+
+				var chainslvl15 = new Dictionary();
+				var chainPolicylvl15 = new Dictionary();
+				chainslvl15["INPUT"] = new Array();
+				chainslvl15["OUTPUT"] = new Array();
+				chainslvl15["FORWARD"] = new Array();
+				chainPolicylvl15["INPUT"] = "DROP";
+				chainPolicylvl15["FORWARD"] = "DROP";
+				chainPolicylvl15["OUTPUT"] = "DROP";
+				level15.chains = chainslvl15
+				level15.chainsPolicy = chainPolicylvl15
+
+
 */
